@@ -1,9 +1,9 @@
- <!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>宝石迷航者 · 星穹射手 | 修复敌人下方出生bug</title>
+    <title>宝石迷航者 · 星穹射手 | 修复按钮+血条</title>
     <style>
         * {
             user-select: none;
@@ -18,7 +18,7 @@
             justify-content: center;
             align-items: center;
             font-family: 'Segoe UI', 'Poppins', 'Courier New', monospace;
-            touch-action: none; /* 优化触摸移动 */
+            touch-action: none;
         }
 
         .game-wrapper {
@@ -74,36 +74,47 @@
         }
 
         button {
-            background: #334155;
+            background: #e67e22;
             border: none;
             font-weight: bold;
-            padding: 6px 30px;
+            padding: 8px 32px;
             border-radius: 60px;
             color: white;
             font-family: inherit;
-            font-size: 1rem;
+            font-size: 1.1rem;
             cursor: pointer;
             transition: all 0.2s ease;
-            box-shadow: 0 3px 0 #0f172a;
+            box-shadow: 0 4px 0 #b45f1b;
+            letter-spacing: 1px;
+        }
+        
+        button:hover {
+            background: #f39c12;
+            transform: translateY(-1px);
+            box-shadow: 0 5px 0 #b45f1b;
         }
 
         button:active {
             transform: translateY(2px);
-            box-shadow: 0 1px 0 #0f172a;
+            box-shadow: 0 2px 0 #b45f1b;
         }
 
         .controls-hint {
-            font-size: 0.7rem;
+            text-align: center;
+            margin-top: 12px;
+            font-size: 0.75rem;
             background: #00000070;
-            padding: 5px 16px;
+            padding: 6px 18px;
             border-radius: 30px;
             backdrop-filter: blur(4px);
+            color: #ffecb3;
         }
 
         @media (max-width: 700px) {
             .game-wrapper { padding: 12px; }
             .stat { font-size: 1.1rem; }
-            .controls-hint { font-size: 0.6rem; }
+            .controls-hint { font-size: 0.65rem; }
+            button { padding: 6px 24px; font-size: 1rem; }
         }
     </style>
 </head>
@@ -120,7 +131,7 @@
             <button id="resetBtn">✨ 重新启航</button>
         </div>
         <div class="controls-hint">
-            🖱️ 鼠标 / 手指 移动 → 控制飞船 &nbsp;&nbsp;| &nbsp;🔫 自动连射 &nbsp;&nbsp;| &nbsp;🧠 敌人只会从上方/左右来袭
+            🖱️ 鼠标 / 手指 移动 → 控制飞船 &nbsp;&nbsp;| &nbsp;🔫 自动连射 &nbsp;&nbsp;| &nbsp;🧠 敌人只从上方/左右来袭
         </div>
     </div>
 </div>
@@ -137,11 +148,11 @@
         canvas.height = H;
         
         // ---------- 游戏核心状态 ----------
-        let gameActive = true;      // false时游戏结束冻结更新
+        let gameActive = true;
         let player = {
             x: W/2,
             y: H - 70,
-            radius: 18,      // 圆形碰撞半径
+            radius: 18,
             hp: 5,
             maxHp: 8
         };
@@ -151,62 +162,60 @@
         const BULLET_RADIUS = 5;
         const BULLET_SPEED = -7.2;
         let shootCooldown = 0;
-        const SHOOT_DELAY_FRAMES = 9;   // 60帧 ≈ 0.15秒一发 自动武器手感
+        const SHOOT_DELAY_FRAMES = 9;
         
         // 敌人系统
         let enemies = [];
         const ENEMY_BASE_RADIUS = 14;
         let enemySpawnCounter = 0;
-        let enemySpawnBaseDelay = 42;    // 帧数间隔，随着得分会变快
+        let enemySpawnBaseDelay = 42;
         
-        // 宝石系统 (收集品)
+        // 宝石系统
         let gems = [];
         const GEM_RADIUS = 8;
         
-        // 特效: 击中特效, 拾取特效
+        // 特效
         let hitEffects = [];
         
         // 分数统计
-        let gemScore = 0;      // 宝石数量 (最终得分)
-        let killCount = 0;     // 击杀敌人数量
+        let gemScore = 0;
+        let killCount = 0;
         
-        // 动态难度因子 (分数越高敌人速度越快, 生成更快)
+        // 动态难度
         let difficultyFactor = 1.0;
         
-        // 移动控制 (鼠标/触摸)
+        // 移动控制
         let targetX = player.x;
         
-        // 无敌帧 (受击闪白)
+        // 无敌帧
         let invincibleFrames = 0;
-        const INVINCIBLE_DURATION = 28;  // 受伤无敌帧数
+        const INVINCIBLE_DURATION = 28;
         
-        // 游戏结束文字动画
-        let gameOverAlpha = 0;
+        // UI元素
+        const hpSpan = document.getElementById('hpValue');
+        const scoreSpan = document.getElementById('scoreValue');
+        const killSpan = document.getElementById('killValue');
+        const resetBtn = document.getElementById('resetBtn');
         
-        // ---------- 辅助函数 ----------
         function updateUI() {
-            document.getElementById('hpValue').innerText = player.hp;
-            document.getElementById('scoreValue').innerText = gemScore;
-            document.getElementById('killValue').innerText = killCount;
+            hpSpan.innerText = player.hp;
+            scoreSpan.innerText = gemScore;
+            killSpan.innerText = killCount;
         }
         
-        // 增加宝石
         function addGemScore(amount) {
             gemScore += amount;
             updateUI();
         }
         
-        // 增加击杀
         function addKill() {
             killCount++;
             updateUI();
-            // 动态难度: 每击杀8个敌人 敌人刷新变快, 速度上升
             let kills = killCount;
             let newDelay = Math.max(24, 42 - Math.floor(kills / 9));
             enemySpawnBaseDelay = newDelay;
         }
         
-        // 玩家受伤
         function damagePlayer(amount) {
             if(!gameActive) return;
             if(invincibleFrames > 0) return;
@@ -214,10 +223,8 @@
             updateUI();
             if(player.hp <= 0) {
                 gameActive = false;
-                // 游戏结束不再生怪移动
             } else {
                 invincibleFrames = INVINCIBLE_DURATION;
-                // 添加受伤特效 (屏幕血雾小粒子)
                 for(let i=0;i<12;i++) {
                     hitEffects.push({
                         x: player.x + (Math.random() - 0.5)*30,
@@ -230,12 +237,10 @@
             }
         }
         
-        // 玩家恢复生命
         function healPlayer(amount) {
             if(!gameActive) return;
             player.hp = Math.min(player.maxHp, player.hp + amount);
             updateUI();
-            // 治愈特效
             for(let i=0;i<8;i++) {
                 hitEffects.push({
                     x: player.x + (Math.random()-0.5)*25,
@@ -247,41 +252,28 @@
             }
         }
         
-        // 修复版本: 生成敌人 坚决杜绝从玩家下方(屏幕下半部)出现
+        // 生成敌人 - 绝不下方出生
         function spawnEnemy() {
-            // 玩家Y坐标大约在H-70附近 (530左右)
-            // 为了让敌人不从背后偷袭，禁止从屏幕下方区域生成：只从上方( Y<100 ) + 左边缘/右边缘 且 Y 不超出玩家中下部
-            
-            let side = Math.floor(Math.random() * 3); // 0: 上边缘, 1: 左边缘, 2: 右边缘 (彻底移除下边缘)
+            let side = Math.floor(Math.random() * 3); // 0:上 1:左 2:右
             let x, y;
             const padding = 40;
+            let maxYAllowed = H - 100; // 避免太靠近底部
             
-            // 安全区域: 禁止生成在玩家背后区域 (Y > player.y - 30 并且 在X接近玩家区域) 
-            // 更彻底的做法: 直接限制生成时 Y 不能大于 H-120 (避免下方)
-            let maxYAllowed = H - 100;  // 最多生成在离底部100px以上区域，避免直接贴脸
-            
-            if(side === 0) { 
-                // 上边缘生成: 完全安全
+            if(side === 0) {
                 x = Math.random() * (W - 80) + 40;
                 y = -padding;
-            } 
-            else if(side === 1) { 
-                // 左边缘生成: Y范围 30 到 maxYAllowed
+            } else if(side === 1) {
                 x = -padding;
                 y = Math.random() * (maxYAllowed - 80) + 40;
-            } 
-            else { 
-                // 右边缘生成: Y范围 30 到 maxYAllowed
+            } else {
                 x = W + padding;
                 y = Math.random() * (maxYAllowed - 80) + 40;
             }
             
-            // 额外安全检测: 如果y大于 H-60 (过分靠近玩家) 则重新调整到安全Y范围
             if(y > H - 90) {
                 y = Math.random() * (H - 150) + 30;
             }
             
-            // 动态速度
             let spd = 2.1 + Math.min(2.9, difficultyFactor * 1.1);
             let extraSpeed = Math.min(1.5, killCount / 55);
             let finalSpeed = spd + extraSpeed;
@@ -295,7 +287,6 @@
             });
         }
         
-        // 生成宝石 (敌人死亡掉落)
         function spawnGem(x, y, isHealth = false) {
             gems.push({
                 x: x, y: y,
@@ -305,25 +296,24 @@
             });
         }
         
-        // 击杀敌人逻辑
         function killEnemy(index, enemyX, enemyY) {
             let enemy = enemies[index];
             if(!enemy) return;
             enemies.splice(index,1);
             addKill();
-            // 掉落宝石 1~2颗
+            
             let dropCount = Math.random() > 0.4 ? 1 : 2;
             for(let i=0;i<dropCount;i++) {
                 spawnGem(enemyX + (Math.random()-0.5)*12, enemyY + (Math.random()-0.5)*12, false);
             }
-            // 小几率掉血包(12%)
+            
             if(Math.random() < 0.12 && player.hp < player.maxHp) {
                 spawnGem(enemyX, enemyY, true);
                 hitEffects.push({
                     x: enemyX, y: enemyY, life: 0.8, size: 9, color: "#82ff9e"
                 });
             }
-            // 爆炸特效
+            
             for(let i=0;i<14;i++) {
                 hitEffects.push({
                     x: enemyX + (Math.random()-0.5)*12,
@@ -335,7 +325,7 @@
             }
         }
         
-        // 重置游戏全部状态
+        // 重置游戏 - 确保所有状态归零
         function resetGame() {
             gameActive = true;
             player.hp = 5;
@@ -353,28 +343,25 @@
             enemySpawnCounter = 12;
             enemySpawnBaseDelay = 42;
             difficultyFactor = 1.0;
-            gameOverAlpha = 0;
             updateUI();
         }
         
-        // -------- 游戏逻辑更新 ----------
+        // 游戏逻辑更新
         function updateGame() {
             if(!gameActive) return;
             
-            // 动态难度因子
             difficultyFactor = 1.0 + (killCount / 95);
             if(difficultyFactor > 2.2) difficultyFactor = 2.2;
             
-            // 1. 玩家移动
+            // 玩家移动
             let dx = targetX - player.x;
             player.x += dx * 0.28;
             player.x = Math.min(Math.max(player.x, player.radius + 8), W - player.radius - 8);
-            player.y = H - 70; // Y轴固定，保证经典街机感，且不会让玩家往下跑
+            player.y = H - 70;
             
-            // 2. 无敌帧递减
             if(invincibleFrames > 0) invincibleFrames--;
             
-            // 3. 自动射击
+            // 自动射击
             if(shootCooldown <= 0) {
                 bullets.push({
                     x: player.x,
@@ -388,7 +375,7 @@
                 shootCooldown--;
             }
             
-            // 4. 子弹移动 + 碰撞(敌人) - 修复碰撞判定，确保子弹攻击后方（但由于我们删除了下方敌人，已经无后方敌人，子弹依然向上射击很安全）
+            // 子弹移动与碰撞
             for(let i=0; i<bullets.length; i++) {
                 bullets[i].x += bullets[i].vx;
                 bullets[i].y += bullets[i].vy;
@@ -416,7 +403,7 @@
                 }
             }
             
-            // 5. 敌人AI移动 (向玩家追踪)
+            // 敌人移动
             for(let i=0; i<enemies.length; i++) {
                 let e = enemies[i];
                 let dxE = player.x - e.x;
@@ -427,13 +414,11 @@
                     e.x += (dxE / len) * move;
                     e.y += (dyE / len) * move;
                 }
-                // 边界移除（超出太远就删除）
                 if(e.x + e.radius < -100 || e.x - e.radius > W+100 || e.y + e.radius < -100 || e.y - e.radius > H+120) {
                     enemies.splice(i,1);
                     i--;
                     continue;
                 }
-                // 敌人与玩家碰撞伤害
                 const distToPlayer = Math.hypot(e.x - player.x, e.y - player.y);
                 if(distToPlayer < e.radius + player.radius) {
                     damagePlayer(1);
@@ -443,7 +428,7 @@
                 }
             }
             
-            // 6. 宝石收集 & 治疗球效果
+            // 宝石收集
             for(let i=0; i<gems.length; i++) {
                 let g = gems[i];
                 let dxG = player.x - g.x;
@@ -469,7 +454,7 @@
                 g.y = Math.min(Math.max(g.y, -20), H+20);
             }
             
-            // 7. 敌人自动生成 (现在不会生成下方敌人)
+            // 生成敌人
             if(enemySpawnCounter <= 0) {
                 let spawnCount = 1;
                 if(Math.random()<0.2 && killCount>15 && enemies.length < 20) spawnCount = 2;
@@ -485,7 +470,7 @@
             if(enemies.length > 28 && enemySpawnCounter < 10) enemySpawnCounter = 12;
         }
         
-        // 绘图模块 (华丽保留)
+        // 绘图
         function draw() {
             ctx.clearRect(0, 0, W, H);
             let grad = ctx.createLinearGradient(0,0,0,H);
@@ -493,6 +478,8 @@
             grad.addColorStop(1,"#110a30");
             ctx.fillStyle = grad;
             ctx.fillRect(0,0,W,H);
+            
+            // 星星
             for(let i=0;i<150;i++) {
                 ctx.fillStyle = `rgba(255,240,200,${0.2+Math.sin(Date.now()*0.002+i)*0.15})`;
                 ctx.beginPath();
@@ -581,7 +568,7 @@
             ctx.arc(player.x+3, player.y-10, 2, 0, Math.PI*2);
             ctx.fill();
             
-            // 特效粒子
+            // 特效
             for(let i=0;i<hitEffects.length;i++) {
                 let p = hitEffects[i];
                 ctx.globalAlpha = p.life;
@@ -595,6 +582,7 @@
             ctx.globalAlpha = 1;
             ctx.shadowBlur = 0;
             
+            // 游戏结束画面
             if(!gameActive) {
                 ctx.font = "bold 36px 'Segoe UI', monospace";
                 ctx.fillStyle = "#ffdfb3";
@@ -608,13 +596,14 @@
                 ctx.fillText("点击「重新启航」继续冒险", W/2-145, H/2+100);
             }
             
+            // 血条 - 修复位置，现在使用正确的Y坐标 player.y-32
             ctx.fillStyle = "#330000";
             ctx.fillRect(player.x-30, player.y-32, 60, 10);
             ctx.fillStyle = "#ff5555";
-            let hpPercent = player.hp/player.maxHp;
-            ctx.fillRect(player.x-30, player.y-32, 60*hpPercent, 8);
+            let hpPercent = player.hp / player.maxHp;
+            ctx.fillRect(player.x-30, player.y-32, 60 * hpPercent, 8);
             ctx.fillStyle = "white";
-            ctx.font="bold 11px monospace";
+            ctx.font = "bold 11px monospace";
             ctx.fillText(`${player.hp}/${player.maxHp}`, player.x-18, player.y-34);
         }
         
@@ -637,11 +626,16 @@
         
         function initEvents() {
             canvas.addEventListener('mousemove', onPointerMove);
-            canvas.addEventListener('touchmove', onPointerMove, {passive:false});
-            canvas.addEventListener('touchstart', (e) => { e.preventDefault(); if(e.touches && gameActive) handleMove(e.touches[0].clientX, e.touches[0].clientY);});
+            canvas.addEventListener('touchmove', onPointerMove, {passive: false});
+            canvas.addEventListener('touchstart', (e) => { 
+                e.preventDefault(); 
+                if(e.touches && gameActive) handleMove(e.touches[0].clientX, e.touches[0].clientY);
+            });
         }
         
-        document.getElementById('resetBtn').addEventListener('click', () => {
+        // 重置按钮事件 - 确保正常工作
+        resetBtn.addEventListener('click', (e) => {
+            e.preventDefault();
             resetGame();
         });
         
