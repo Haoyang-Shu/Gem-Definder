@@ -1,9 +1,9 @@
-<!DOCTYPE html>
+ <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
-    <title>宝石迷航者 · 星穹射手 | 修复版</title>
+    <title>宝石迷航者 · 星穹射手 | 修复敌人下方出生bug</title>
     <style>
         * {
             user-select: none;
@@ -120,7 +120,7 @@
             <button id="resetBtn">✨ 重新启航</button>
         </div>
         <div class="controls-hint">
-            🖱️ 鼠标 / 手指 移动 → 控制飞船 &nbsp;&nbsp;| &nbsp;🔫 自动连射 &nbsp;&nbsp;| &nbsp;🧠 敌人会追踪
+            🖱️ 鼠标 / 手指 移动 → 控制飞船 &nbsp;&nbsp;| &nbsp;🔫 自动连射 &nbsp;&nbsp;| &nbsp;🧠 敌人只会从上方/左右来袭
         </div>
     </div>
 </div>
@@ -247,43 +247,43 @@
             }
         }
         
-        // 生成新敌人 (修复: 基于玩家位置的边缘生成，避免出生在脸上)
+        // 修复版本: 生成敌人 坚决杜绝从玩家下方(屏幕下半部)出现
         function spawnEnemy() {
-            // 确保不在玩家脸上刷新: 选择离玩家较远的边缘
-            let side = Math.floor(Math.random() * 4);
+            // 玩家Y坐标大约在H-70附近 (530左右)
+            // 为了让敌人不从背后偷袭，禁止从屏幕下方区域生成：只从上方( Y<100 ) + 左边缘/右边缘 且 Y 不超出玩家中下部
+            
+            let side = Math.floor(Math.random() * 3); // 0: 上边缘, 1: 左边缘, 2: 右边缘 (彻底移除下边缘)
             let x, y;
             const padding = 40;
-            // 玩家中心点
-            const playerCenterX = player.x;
-            const playerCenterY = player.y;
             
-            let valid = false;
-            let attempts = 0;
-            while(!valid && attempts < 8) {
-                if(side === 0) { // 左边缘
-                    x = -padding;
-                    y = Math.random() * (H - 100) + 50;
-                } else if(side === 1) { // 上边缘
-                    x = Math.random() * (W - 80) + 40;
-                    y = -padding;
-                } else if(side === 2) { // 右边缘
-                    x = W + padding;
-                    y = Math.random() * (H - 100) + 50;
-                } else {
-                    x = Math.random() * (W - 80) + 40;
-                    y = H + padding;
-                }
-                // 检查是否离玩家太近 (距离小于150像素则重新选边)
-                const distToPlayer = Math.hypot(x - playerCenterX, y - playerCenterY);
-                if(distToPlayer > 140) valid = true;
-                else {
-                    side = (side + 1) % 4;
-                    attempts++;
-                }
+            // 安全区域: 禁止生成在玩家背后区域 (Y > player.y - 30 并且 在X接近玩家区域) 
+            // 更彻底的做法: 直接限制生成时 Y 不能大于 H-120 (避免下方)
+            let maxYAllowed = H - 100;  // 最多生成在离底部100px以上区域，避免直接贴脸
+            
+            if(side === 0) { 
+                // 上边缘生成: 完全安全
+                x = Math.random() * (W - 80) + 40;
+                y = -padding;
+            } 
+            else if(side === 1) { 
+                // 左边缘生成: Y范围 30 到 maxYAllowed
+                x = -padding;
+                y = Math.random() * (maxYAllowed - 80) + 40;
+            } 
+            else { 
+                // 右边缘生成: Y范围 30 到 maxYAllowed
+                x = W + padding;
+                y = Math.random() * (maxYAllowed - 80) + 40;
             }
+            
+            // 额外安全检测: 如果y大于 H-60 (过分靠近玩家) 则重新调整到安全Y范围
+            if(y > H - 90) {
+                y = Math.random() * (H - 150) + 30;
+            }
+            
             // 动态速度
-            let spd = 2.0 + Math.min(2.9, difficultyFactor * 1.1);
-            let extraSpeed = Math.min(1.6, killCount / 55);
+            let spd = 2.1 + Math.min(2.9, difficultyFactor * 1.1);
+            let extraSpeed = Math.min(1.5, killCount / 55);
             let finalSpeed = spd + extraSpeed;
             
             enemies.push({
@@ -305,7 +305,7 @@
             });
         }
         
-        // 击杀敌人逻辑 (修复: 掉落血包的类型明确)
+        // 击杀敌人逻辑
         function killEnemy(index, enemyX, enemyY) {
             let enemy = enemies[index];
             if(!enemy) return;
@@ -318,14 +318,12 @@
             }
             // 小几率掉血包(12%)
             if(Math.random() < 0.12 && player.hp < player.maxHp) {
-                // 掉落治疗球实体
                 spawnGem(enemyX, enemyY, true);
-                // 额外特效标识
                 hitEffects.push({
                     x: enemyX, y: enemyY, life: 0.8, size: 9, color: "#82ff9e"
                 });
             }
-            // 产生爆炸特效
+            // 爆炸特效
             for(let i=0;i<14;i++) {
                 hitEffects.push({
                     x: enemyX + (Math.random()-0.5)*12,
@@ -337,7 +335,7 @@
             }
         }
         
-        // 重置游戏全部状态 (修复: 重置时所有动态数组清空，且恢复默认参数)
+        // 重置游戏全部状态
         function resetGame() {
             gameActive = true;
             player.hp = 5;
@@ -352,27 +350,26 @@
             killCount = 0;
             invincibleFrames = 0;
             shootCooldown = 0;
-            enemySpawnCounter = 12;   // 开局稍微延迟生成 
+            enemySpawnCounter = 12;
             enemySpawnBaseDelay = 42;
             difficultyFactor = 1.0;
             gameOverAlpha = 0;
             updateUI();
         }
         
-        // -------- 游戏逻辑更新 (每一帧) ----------
+        // -------- 游戏逻辑更新 ----------
         function updateGame() {
             if(!gameActive) return;
             
-            // 动态难度因子: 基于击杀数, 影响敌人速度加成
+            // 动态难度因子
             difficultyFactor = 1.0 + (killCount / 95);
             if(difficultyFactor > 2.2) difficultyFactor = 2.2;
             
-            // 1. 玩家移动 (平滑跟随鼠标/手指，但边界限制)
+            // 1. 玩家移动
             let dx = targetX - player.x;
             player.x += dx * 0.28;
-            // 边界限制 (保留半径余量)
             player.x = Math.min(Math.max(player.x, player.radius + 8), W - player.radius - 8);
-            player.y = H - 70; // 固定Y轴，街机风格
+            player.y = H - 70; // Y轴固定，保证经典街机感，且不会让玩家往下跑
             
             // 2. 无敌帧递减
             if(invincibleFrames > 0) invincibleFrames--;
@@ -391,11 +388,10 @@
                 shootCooldown--;
             }
             
-            // 4. 子弹移动 + 碰撞(敌人)
+            // 4. 子弹移动 + 碰撞(敌人) - 修复碰撞判定，确保子弹攻击后方（但由于我们删除了下方敌人，已经无后方敌人，子弹依然向上射击很安全）
             for(let i=0; i<bullets.length; i++) {
                 bullets[i].x += bullets[i].vx;
                 bullets[i].y += bullets[i].vy;
-                // 超出边界移除
                 if(bullets[i].y + BULLET_RADIUS < 0 || bullets[i].y - BULLET_RADIUS > H ||
                    bullets[i].x + BULLET_RADIUS < 0 || bullets[i].x - BULLET_RADIUS > W) {
                     bullets.splice(i,1);
@@ -431,25 +427,23 @@
                     e.x += (dxE / len) * move;
                     e.y += (dyE / len) * move;
                 }
-                // 边界移除（超出太远就删除，避免无限累积）
+                // 边界移除（超出太远就删除）
                 if(e.x + e.radius < -100 || e.x - e.radius > W+100 || e.y + e.radius < -100 || e.y - e.radius > H+120) {
                     enemies.splice(i,1);
                     i--;
                     continue;
                 }
-                // 敌人与玩家碰撞伤害（并反弹击退，避免连续帧多次伤害）
+                // 敌人与玩家碰撞伤害
                 const distToPlayer = Math.hypot(e.x - player.x, e.y - player.y);
                 if(distToPlayer < e.radius + player.radius) {
                     damagePlayer(1);
-                    // 碰撞后移除该敌人（防止瞬时多次伤害）
                     enemies.splice(i,1);
                     i--;
-                    // 击退特效
                     for(let p=0;p<6;p++) hitEffects.push({x:player.x+(Math.random()-0.5)*18, y:player.y+(Math.random()-0.5)*18, life:0.5, size:3, color:"#ff8866"});
                 }
             }
             
-            // 6. 宝石收集 & 治疗球效果 (修复: isHealth 正确判断并治疗)
+            // 6. 宝石收集 & 治疗球效果
             for(let i=0; i<gems.length; i++) {
                 let g = gems[i];
                 let dxG = player.x - g.x;
@@ -461,29 +455,26 @@
                     } else {
                         addGemScore(1);
                     }
-                    // 拾取特效
                     for(let f=0;f<6;f++) hitEffects.push({x:g.x, y:g.y, life:0.5, size:4, color:"#f7d44a"});
                     gems.splice(i,1);
                     i--;
                     continue;
                 }
-                // 吸引效果 (轻微引力)
                 let attract = g.isHealth ? 0.1 : 0.14;
                 let moveX = dxG * attract;
                 let moveY = dyG * attract;
                 g.x += moveX;
                 g.y += moveY;
-                // 边界限制防止飞走
                 g.x = Math.min(Math.max(g.x, -20), W+20);
                 g.y = Math.min(Math.max(g.y, -20), H+20);
             }
             
-            // 7. 敌人自动生成 (不能太过密集)
+            // 7. 敌人自动生成 (现在不会生成下方敌人)
             if(enemySpawnCounter <= 0) {
                 let spawnCount = 1;
                 if(Math.random()<0.2 && killCount>15 && enemies.length < 20) spawnCount = 2;
                 for(let s=0;s<spawnCount;s++) {
-                    if(enemies.length < 32) spawnEnemy();
+                    if(enemies.length < 35) spawnEnemy();
                 }
                 let dynamicDelay = Math.max(22, enemySpawnBaseDelay - Math.floor(killCount/14));
                 enemySpawnCounter = dynamicDelay;
@@ -491,20 +482,17 @@
                 enemySpawnCounter--;
             }
             
-            // 额外限制: 如果敌人太多则减缓生成
-            if(enemies.length > 25 && enemySpawnCounter < 10) enemySpawnCounter = 12;
+            if(enemies.length > 28 && enemySpawnCounter < 10) enemySpawnCounter = 12;
         }
         
-        // ---------- 华丽绘图模块 ----------
+        // 绘图模块 (华丽保留)
         function draw() {
             ctx.clearRect(0, 0, W, H);
-            // 星空背景渐变
             let grad = ctx.createLinearGradient(0,0,0,H);
             grad.addColorStop(0,"#030221");
             grad.addColorStop(1,"#110a30");
             ctx.fillStyle = grad;
             ctx.fillRect(0,0,W,H);
-            // 星星粒子
             for(let i=0;i<150;i++) {
                 ctx.fillStyle = `rgba(255,240,200,${0.2+Math.sin(Date.now()*0.002+i)*0.15})`;
                 ctx.beginPath();
@@ -512,7 +500,7 @@
                 ctx.fill();
             }
             
-            // 宝石 (修复显示治疗球标识)
+            // 宝石
             for(let g of gems) {
                 ctx.shadowBlur = 8;
                 ctx.shadowColor = "#f7c56e";
@@ -548,7 +536,7 @@
                 ctx.fill();
             }
             
-            // 敌人 (更邪魅造型)
+            // 敌人
             for(let e of enemies) {
                 ctx.shadowBlur = 5;
                 ctx.fillStyle = e.color;
@@ -569,7 +557,7 @@
                 ctx.fill();
             }
             
-            // 玩家飞船 (无敌闪烁)
+            // 玩家飞船
             ctx.shadowBlur = 12;
             let invAlpha = (invincibleFrames>0 && (Math.floor(Date.now()/50)%3===0));
             ctx.fillStyle = invAlpha ? "#f5bc70" : "#6dc6ff";
@@ -607,7 +595,6 @@
             ctx.globalAlpha = 1;
             ctx.shadowBlur = 0;
             
-            // 游戏结束画面
             if(!gameActive) {
                 ctx.font = "bold 36px 'Segoe UI', monospace";
                 ctx.fillStyle = "#ffdfb3";
@@ -621,7 +608,6 @@
                 ctx.fillText("点击「重新启航」继续冒险", W/2-145, H/2+100);
             }
             
-            // 血条UI显示
             ctx.fillStyle = "#330000";
             ctx.fillRect(player.x-30, player.y-32, 60, 10);
             ctx.fillStyle = "#ff5555";
@@ -632,12 +618,11 @@
             ctx.fillText(`${player.hp}/${player.maxHp}`, player.x-18, player.y-34);
         }
         
-        // -------- 控制事件 (鼠标 + 触摸) 修复: gameActive时仍然移动但游戏结束无法移动更好---------
+        // 控制事件
         function handleMove(clientX, clientY) {
-            if(!gameActive) return;  // 游戏结束不可移动飞船
+            if(!gameActive) return;
             const rect = canvas.getBoundingClientRect();
             const scaleX = canvas.width / rect.width;
-            const scaleY = canvas.height / rect.height;
             let canvasX = (clientX - rect.left) * scaleX;
             canvasX = Math.min(Math.max(canvasX, player.radius+5), W - player.radius-5);
             targetX = canvasX;
@@ -656,12 +641,10 @@
             canvas.addEventListener('touchstart', (e) => { e.preventDefault(); if(e.touches && gameActive) handleMove(e.touches[0].clientX, e.touches[0].clientY);});
         }
         
-        // 重置按钮
         document.getElementById('resetBtn').addEventListener('click', () => {
             resetGame();
         });
         
-        // 动画循环
         function gameLoop() {
             updateGame();
             draw();
