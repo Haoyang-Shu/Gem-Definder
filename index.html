@@ -1,0 +1,677 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>宝石迷航者 · 星穹射手 | 修复版</title>
+    <style>
+        * {
+            user-select: none;
+            -webkit-tap-highlight-color: transparent;
+        }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            background: radial-gradient(circle at 20% 30%, #0a0f2a, #020617);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-family: 'Segoe UI', 'Poppins', 'Courier New', monospace;
+            touch-action: none; /* 优化触摸移动 */
+        }
+
+        .game-wrapper {
+            background: #00000055;
+            border-radius: 48px;
+            padding: 16px 20px 24px;
+            backdrop-filter: blur(3px);
+            box-shadow: 0 25px 40px rgba(0,0,0,0.5);
+        }
+
+        canvas {
+            display: block;
+            margin: 0 auto;
+            border-radius: 32px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.5), inset 0 0 0 1px rgba(255,255,255,0.1);
+            cursor: none;
+            background: #030318;
+        }
+
+        .info-panel {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin: 18px 12px 10px 12px;
+            color: #f5f0e0;
+            text-shadow: 0 2px 3px black;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        .stats {
+            display: flex;
+            gap: 20px;
+            background: #1e293bc9;
+            backdrop-filter: blur(8px);
+            padding: 6px 20px;
+            border-radius: 80px;
+            border: 1px solid #ffd966;
+        }
+
+        .stat {
+            font-weight: bold;
+            font-size: 1.3rem;
+            letter-spacing: 1px;
+            font-family: monospace;
+        }
+
+        .stat span {
+            font-size: 0.85rem;
+            font-weight: normal;
+            margin-right: 6px;
+            color: #ffdfa5;
+        }
+
+        button {
+            background: #334155;
+            border: none;
+            font-weight: bold;
+            padding: 6px 30px;
+            border-radius: 60px;
+            color: white;
+            font-family: inherit;
+            font-size: 1rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            box-shadow: 0 3px 0 #0f172a;
+        }
+
+        button:active {
+            transform: translateY(2px);
+            box-shadow: 0 1px 0 #0f172a;
+        }
+
+        .controls-hint {
+            font-size: 0.7rem;
+            background: #00000070;
+            padding: 5px 16px;
+            border-radius: 30px;
+            backdrop-filter: blur(4px);
+        }
+
+        @media (max-width: 700px) {
+            .game-wrapper { padding: 12px; }
+            .stat { font-size: 1.1rem; }
+            .controls-hint { font-size: 0.6rem; }
+        }
+    </style>
+</head>
+<body>
+<div>
+    <div class="game-wrapper">
+        <canvas id="gameCanvas" width="800" height="600"></canvas>
+        <div class="info-panel">
+            <div class="stats">
+                <div class="stat"><span>❤️ 生命</span> <span id="hpValue">5</span></div>
+                <div class="stat"><span>💎 宝石</span> <span id="scoreValue">0</span></div>
+                <div class="stat"><span>⚡ 击杀</span> <span id="killValue">0</span></div>
+            </div>
+            <button id="resetBtn">✨ 重新启航</button>
+        </div>
+        <div class="controls-hint">
+            🖱️ 鼠标 / 手指 移动 → 控制飞船 &nbsp;&nbsp;| &nbsp;🔫 自动连射 &nbsp;&nbsp;| &nbsp;🧠 敌人会追踪
+        </div>
+    </div>
+</div>
+
+<script>
+    (function(){
+        // -------- 画布元素 ----------
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // ---------- 固定尺寸 ----------
+        const W = 800, H = 600;
+        canvas.width = W;
+        canvas.height = H;
+        
+        // ---------- 游戏核心状态 ----------
+        let gameActive = true;      // false时游戏结束冻结更新
+        let player = {
+            x: W/2,
+            y: H - 70,
+            radius: 18,      // 圆形碰撞半径
+            hp: 5,
+            maxHp: 8
+        };
+        
+        // 子弹系统
+        let bullets = [];
+        const BULLET_RADIUS = 5;
+        const BULLET_SPEED = -7.2;
+        let shootCooldown = 0;
+        const SHOOT_DELAY_FRAMES = 9;   // 60帧 ≈ 0.15秒一发 自动武器手感
+        
+        // 敌人系统
+        let enemies = [];
+        const ENEMY_BASE_RADIUS = 14;
+        let enemySpawnCounter = 0;
+        let enemySpawnBaseDelay = 42;    // 帧数间隔，随着得分会变快
+        
+        // 宝石系统 (收集品)
+        let gems = [];
+        const GEM_RADIUS = 8;
+        
+        // 特效: 击中特效, 拾取特效
+        let hitEffects = [];
+        
+        // 分数统计
+        let gemScore = 0;      // 宝石数量 (最终得分)
+        let killCount = 0;     // 击杀敌人数量
+        
+        // 动态难度因子 (分数越高敌人速度越快, 生成更快)
+        let difficultyFactor = 1.0;
+        
+        // 移动控制 (鼠标/触摸)
+        let targetX = player.x;
+        
+        // 无敌帧 (受击闪白)
+        let invincibleFrames = 0;
+        const INVINCIBLE_DURATION = 28;  // 受伤无敌帧数
+        
+        // 游戏结束文字动画
+        let gameOverAlpha = 0;
+        
+        // ---------- 辅助函数 ----------
+        function updateUI() {
+            document.getElementById('hpValue').innerText = player.hp;
+            document.getElementById('scoreValue').innerText = gemScore;
+            document.getElementById('killValue').innerText = killCount;
+        }
+        
+        // 增加宝石
+        function addGemScore(amount) {
+            gemScore += amount;
+            updateUI();
+        }
+        
+        // 增加击杀
+        function addKill() {
+            killCount++;
+            updateUI();
+            // 动态难度: 每击杀8个敌人 敌人刷新变快, 速度上升
+            let kills = killCount;
+            let newDelay = Math.max(24, 42 - Math.floor(kills / 9));
+            enemySpawnBaseDelay = newDelay;
+        }
+        
+        // 玩家受伤
+        function damagePlayer(amount) {
+            if(!gameActive) return;
+            if(invincibleFrames > 0) return;
+            player.hp = Math.max(0, player.hp - amount);
+            updateUI();
+            if(player.hp <= 0) {
+                gameActive = false;
+                // 游戏结束不再生怪移动
+            } else {
+                invincibleFrames = INVINCIBLE_DURATION;
+                // 添加受伤特效 (屏幕血雾小粒子)
+                for(let i=0;i<12;i++) {
+                    hitEffects.push({
+                        x: player.x + (Math.random() - 0.5)*30,
+                        y: player.y + (Math.random() - 0.5)*20,
+                        life: 0.7,
+                        size: Math.random()*3+2,
+                        color: `hsl(${Math.random()*20 + 350}, 80%, 60%)`
+                    });
+                }
+            }
+        }
+        
+        // 玩家恢复生命
+        function healPlayer(amount) {
+            if(!gameActive) return;
+            player.hp = Math.min(player.maxHp, player.hp + amount);
+            updateUI();
+            // 治愈特效
+            for(let i=0;i<8;i++) {
+                hitEffects.push({
+                    x: player.x + (Math.random()-0.5)*25,
+                    y: player.y + (Math.random()-0.5)*20,
+                    life: 0.9,
+                    size: Math.random()*4+2,
+                    color: `hsl(120, 70%, 65%)`
+                });
+            }
+        }
+        
+        // 生成新敌人 (修复: 基于玩家位置的边缘生成，避免出生在脸上)
+        function spawnEnemy() {
+            // 确保不在玩家脸上刷新: 选择离玩家较远的边缘
+            let side = Math.floor(Math.random() * 4);
+            let x, y;
+            const padding = 40;
+            // 玩家中心点
+            const playerCenterX = player.x;
+            const playerCenterY = player.y;
+            
+            let valid = false;
+            let attempts = 0;
+            while(!valid && attempts < 8) {
+                if(side === 0) { // 左边缘
+                    x = -padding;
+                    y = Math.random() * (H - 100) + 50;
+                } else if(side === 1) { // 上边缘
+                    x = Math.random() * (W - 80) + 40;
+                    y = -padding;
+                } else if(side === 2) { // 右边缘
+                    x = W + padding;
+                    y = Math.random() * (H - 100) + 50;
+                } else {
+                    x = Math.random() * (W - 80) + 40;
+                    y = H + padding;
+                }
+                // 检查是否离玩家太近 (距离小于150像素则重新选边)
+                const distToPlayer = Math.hypot(x - playerCenterX, y - playerCenterY);
+                if(distToPlayer > 140) valid = true;
+                else {
+                    side = (side + 1) % 4;
+                    attempts++;
+                }
+            }
+            // 动态速度
+            let spd = 2.0 + Math.min(2.9, difficultyFactor * 1.1);
+            let extraSpeed = Math.min(1.6, killCount / 55);
+            let finalSpeed = spd + extraSpeed;
+            
+            enemies.push({
+                x: x, y: y,
+                radius: ENEMY_BASE_RADIUS,
+                hp: 1,
+                speed: finalSpeed,
+                color: `hsl(${Math.random() * 20 + 340}, 70%, 55%)`
+            });
+        }
+        
+        // 生成宝石 (敌人死亡掉落)
+        function spawnGem(x, y, isHealth = false) {
+            gems.push({
+                x: x, y: y,
+                radius: GEM_RADIUS,
+                isHealth: isHealth,
+                magnet: false
+            });
+        }
+        
+        // 击杀敌人逻辑 (修复: 掉落血包的类型明确)
+        function killEnemy(index, enemyX, enemyY) {
+            let enemy = enemies[index];
+            if(!enemy) return;
+            enemies.splice(index,1);
+            addKill();
+            // 掉落宝石 1~2颗
+            let dropCount = Math.random() > 0.4 ? 1 : 2;
+            for(let i=0;i<dropCount;i++) {
+                spawnGem(enemyX + (Math.random()-0.5)*12, enemyY + (Math.random()-0.5)*12, false);
+            }
+            // 小几率掉血包(12%)
+            if(Math.random() < 0.12 && player.hp < player.maxHp) {
+                // 掉落治疗球实体
+                spawnGem(enemyX, enemyY, true);
+                // 额外特效标识
+                hitEffects.push({
+                    x: enemyX, y: enemyY, life: 0.8, size: 9, color: "#82ff9e"
+                });
+            }
+            // 产生爆炸特效
+            for(let i=0;i<14;i++) {
+                hitEffects.push({
+                    x: enemyX + (Math.random()-0.5)*12,
+                    y: enemyY + (Math.random()-0.5)*12,
+                    life: 0.6,
+                    size: Math.random()*4+3,
+                    color: `orange`
+                });
+            }
+        }
+        
+        // 重置游戏全部状态 (修复: 重置时所有动态数组清空，且恢复默认参数)
+        function resetGame() {
+            gameActive = true;
+            player.hp = 5;
+            player.x = W/2;
+            player.y = H - 70;
+            targetX = player.x;
+            bullets = [];
+            enemies = [];
+            gems = [];
+            hitEffects = [];
+            gemScore = 0;
+            killCount = 0;
+            invincibleFrames = 0;
+            shootCooldown = 0;
+            enemySpawnCounter = 12;   // 开局稍微延迟生成 
+            enemySpawnBaseDelay = 42;
+            difficultyFactor = 1.0;
+            gameOverAlpha = 0;
+            updateUI();
+        }
+        
+        // -------- 游戏逻辑更新 (每一帧) ----------
+        function updateGame() {
+            if(!gameActive) return;
+            
+            // 动态难度因子: 基于击杀数, 影响敌人速度加成
+            difficultyFactor = 1.0 + (killCount / 95);
+            if(difficultyFactor > 2.2) difficultyFactor = 2.2;
+            
+            // 1. 玩家移动 (平滑跟随鼠标/手指，但边界限制)
+            let dx = targetX - player.x;
+            player.x += dx * 0.28;
+            // 边界限制 (保留半径余量)
+            player.x = Math.min(Math.max(player.x, player.radius + 8), W - player.radius - 8);
+            player.y = H - 70; // 固定Y轴，街机风格
+            
+            // 2. 无敌帧递减
+            if(invincibleFrames > 0) invincibleFrames--;
+            
+            // 3. 自动射击
+            if(shootCooldown <= 0) {
+                bullets.push({
+                    x: player.x,
+                    y: player.y - 10,
+                    radius: BULLET_RADIUS,
+                    vx: 0,
+                    vy: BULLET_SPEED
+                });
+                shootCooldown = SHOOT_DELAY_FRAMES;
+            } else {
+                shootCooldown--;
+            }
+            
+            // 4. 子弹移动 + 碰撞(敌人)
+            for(let i=0; i<bullets.length; i++) {
+                bullets[i].x += bullets[i].vx;
+                bullets[i].y += bullets[i].vy;
+                // 超出边界移除
+                if(bullets[i].y + BULLET_RADIUS < 0 || bullets[i].y - BULLET_RADIUS > H ||
+                   bullets[i].x + BULLET_RADIUS < 0 || bullets[i].x - BULLET_RADIUS > W) {
+                    bullets.splice(i,1);
+                    i--;
+                    continue;
+                }
+                let hit = false;
+                for(let j=0; j<enemies.length; j++) {
+                    const e = enemies[j];
+                    const dxb = bullets[i].x - e.x;
+                    const dyb = bullets[i].y - e.y;
+                    const dist = Math.hypot(dxb, dyb);
+                    if(dist < BULLET_RADIUS + e.radius) {
+                        killEnemy(j, e.x, e.y);
+                        hit = true;
+                        break;
+                    }
+                }
+                if(hit) {
+                    bullets.splice(i,1);
+                    i--;
+                }
+            }
+            
+            // 5. 敌人AI移动 (向玩家追踪)
+            for(let i=0; i<enemies.length; i++) {
+                let e = enemies[i];
+                let dxE = player.x - e.x;
+                let dyE = player.y - e.y;
+                let len = Math.hypot(dxE, dyE);
+                if(len > 0.01) {
+                    let move = e.speed;
+                    e.x += (dxE / len) * move;
+                    e.y += (dyE / len) * move;
+                }
+                // 边界移除（超出太远就删除，避免无限累积）
+                if(e.x + e.radius < -100 || e.x - e.radius > W+100 || e.y + e.radius < -100 || e.y - e.radius > H+120) {
+                    enemies.splice(i,1);
+                    i--;
+                    continue;
+                }
+                // 敌人与玩家碰撞伤害（并反弹击退，避免连续帧多次伤害）
+                const distToPlayer = Math.hypot(e.x - player.x, e.y - player.y);
+                if(distToPlayer < e.radius + player.radius) {
+                    damagePlayer(1);
+                    // 碰撞后移除该敌人（防止瞬时多次伤害）
+                    enemies.splice(i,1);
+                    i--;
+                    // 击退特效
+                    for(let p=0;p<6;p++) hitEffects.push({x:player.x+(Math.random()-0.5)*18, y:player.y+(Math.random()-0.5)*18, life:0.5, size:3, color:"#ff8866"});
+                }
+            }
+            
+            // 6. 宝石收集 & 治疗球效果 (修复: isHealth 正确判断并治疗)
+            for(let i=0; i<gems.length; i++) {
+                let g = gems[i];
+                let dxG = player.x - g.x;
+                let dyG = player.y - g.y;
+                let dist = Math.hypot(dxG, dyG);
+                if(dist < player.radius + g.radius) {
+                    if(g.isHealth === true) {
+                        healPlayer(1);
+                    } else {
+                        addGemScore(1);
+                    }
+                    // 拾取特效
+                    for(let f=0;f<6;f++) hitEffects.push({x:g.x, y:g.y, life:0.5, size:4, color:"#f7d44a"});
+                    gems.splice(i,1);
+                    i--;
+                    continue;
+                }
+                // 吸引效果 (轻微引力)
+                let attract = g.isHealth ? 0.1 : 0.14;
+                let moveX = dxG * attract;
+                let moveY = dyG * attract;
+                g.x += moveX;
+                g.y += moveY;
+                // 边界限制防止飞走
+                g.x = Math.min(Math.max(g.x, -20), W+20);
+                g.y = Math.min(Math.max(g.y, -20), H+20);
+            }
+            
+            // 7. 敌人自动生成 (不能太过密集)
+            if(enemySpawnCounter <= 0) {
+                let spawnCount = 1;
+                if(Math.random()<0.2 && killCount>15 && enemies.length < 20) spawnCount = 2;
+                for(let s=0;s<spawnCount;s++) {
+                    if(enemies.length < 32) spawnEnemy();
+                }
+                let dynamicDelay = Math.max(22, enemySpawnBaseDelay - Math.floor(killCount/14));
+                enemySpawnCounter = dynamicDelay;
+            } else {
+                enemySpawnCounter--;
+            }
+            
+            // 额外限制: 如果敌人太多则减缓生成
+            if(enemies.length > 25 && enemySpawnCounter < 10) enemySpawnCounter = 12;
+        }
+        
+        // ---------- 华丽绘图模块 ----------
+        function draw() {
+            ctx.clearRect(0, 0, W, H);
+            // 星空背景渐变
+            let grad = ctx.createLinearGradient(0,0,0,H);
+            grad.addColorStop(0,"#030221");
+            grad.addColorStop(1,"#110a30");
+            ctx.fillStyle = grad;
+            ctx.fillRect(0,0,W,H);
+            // 星星粒子
+            for(let i=0;i<150;i++) {
+                ctx.fillStyle = `rgba(255,240,200,${0.2+Math.sin(Date.now()*0.002+i)*0.15})`;
+                ctx.beginPath();
+                ctx.arc( (i*173)%W, (i*257)%H, 1.2, 0, Math.PI*2);
+                ctx.fill();
+            }
+            
+            // 宝石 (修复显示治疗球标识)
+            for(let g of gems) {
+                ctx.shadowBlur = 8;
+                ctx.shadowColor = "#f7c56e";
+                ctx.beginPath();
+                if(g.isHealth) {
+                    ctx.fillStyle = "#ff8c7a";
+                    ctx.arc(g.x, g.y, g.radius-1, 0, Math.PI*2);
+                    ctx.fill();
+                    ctx.fillStyle = "white";
+                    ctx.font = "bold 13px monospace";
+                    ctx.shadowBlur = 2;
+                    ctx.fillText("❤️", g.x-6, g.y+5);
+                } else {
+                    ctx.fillStyle = "#ffdf80";
+                    ctx.arc(g.x, g.y, g.radius-1, 0, Math.PI*2);
+                    ctx.fill();
+                    ctx.fillStyle = "#ffb347";
+                    ctx.arc(g.x, g.y, g.radius-3, 0, Math.PI*2);
+                    ctx.fill();
+                }
+            }
+            
+            // 子弹
+            for(let b of bullets) {
+                ctx.fillStyle = "#f0f062";
+                ctx.shadowBlur = 10;
+                ctx.beginPath();
+                ctx.rect(b.x-3, b.y-6, 6, 12);
+                ctx.fill();
+                ctx.fillStyle = "white";
+                ctx.beginPath();
+                ctx.rect(b.x-1.5, b.y-10, 3, 6);
+                ctx.fill();
+            }
+            
+            // 敌人 (更邪魅造型)
+            for(let e of enemies) {
+                ctx.shadowBlur = 5;
+                ctx.fillStyle = e.color;
+                ctx.beginPath();
+                ctx.arc(e.x, e.y, e.radius-2, 0, Math.PI*2);
+                ctx.fill();
+                ctx.fillStyle = "#2c1e2a";
+                ctx.beginPath();
+                ctx.ellipse(e.x-3, e.y-2, 2, 3, 0, 0, Math.PI*2);
+                ctx.fill();
+                ctx.fillStyle = "white";
+                ctx.beginPath();
+                ctx.arc(e.x-4, e.y-3, 1.2, 0, Math.PI*2);
+                ctx.fill();
+                ctx.fillStyle = "#ff5533";
+                ctx.beginPath();
+                ctx.ellipse(e.x+2, e.y+2, 3,2,0,0,Math.PI*2);
+                ctx.fill();
+            }
+            
+            // 玩家飞船 (无敌闪烁)
+            ctx.shadowBlur = 12;
+            let invAlpha = (invincibleFrames>0 && (Math.floor(Date.now()/50)%3===0));
+            ctx.fillStyle = invAlpha ? "#f5bc70" : "#6dc6ff";
+            ctx.beginPath();
+            ctx.moveTo(player.x, player.y-18);
+            ctx.lineTo(player.x-15, player.y+5);
+            ctx.lineTo(player.x-5, player.y+2);
+            ctx.lineTo(player.x-5, player.y+12);
+            ctx.lineTo(player.x, player.y+8);
+            ctx.lineTo(player.x+5, player.y+12);
+            ctx.lineTo(player.x+5, player.y+2);
+            ctx.lineTo(player.x+15, player.y+5);
+            ctx.fill();
+            ctx.fillStyle = "#aae0ff";
+            ctx.beginPath();
+            ctx.arc(player.x, player.y-8, 8, 0, Math.PI*2);
+            ctx.fill();
+            ctx.fillStyle = "#1d3557";
+            ctx.beginPath();
+            ctx.arc(player.x-3, player.y-10, 2, 0, Math.PI*2);
+            ctx.arc(player.x+3, player.y-10, 2, 0, Math.PI*2);
+            ctx.fill();
+            
+            // 特效粒子
+            for(let i=0;i<hitEffects.length;i++) {
+                let p = hitEffects[i];
+                ctx.globalAlpha = p.life;
+                ctx.fillStyle = p.color || "#ffb347";
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.size, 0, Math.PI*2);
+                ctx.fill();
+                p.life -= 0.03;
+                if(p.life<=0) { hitEffects.splice(i,1); i--; }
+            }
+            ctx.globalAlpha = 1;
+            ctx.shadowBlur = 0;
+            
+            // 游戏结束画面
+            if(!gameActive) {
+                ctx.font = "bold 36px 'Segoe UI', monospace";
+                ctx.fillStyle = "#ffdfb3";
+                ctx.shadowBlur = 6;
+                ctx.fillText("💀 游戏终结 💀", W/2-135, H/2-50);
+                ctx.font = "24px monospace";
+                ctx.fillStyle = "#f7c56e";
+                ctx.fillText(`✨ 宝石: ${gemScore}   🔥 歼灭: ${killCount}`, W/2-170, H/2+30);
+                ctx.font = "18px monospace";
+                ctx.fillStyle = "#cdd9ff";
+                ctx.fillText("点击「重新启航」继续冒险", W/2-145, H/2+100);
+            }
+            
+            // 血条UI显示
+            ctx.fillStyle = "#330000";
+            ctx.fillRect(player.x-30, player.y-32, 60, 10);
+            ctx.fillStyle = "#ff5555";
+            let hpPercent = player.hp/player.maxHp;
+            ctx.fillRect(player.x-30, player.y-32, 60*hpPercent, 8);
+            ctx.fillStyle = "white";
+            ctx.font="bold 11px monospace";
+            ctx.fillText(`${player.hp}/${player.maxHp}`, player.x-18, player.y-34);
+        }
+        
+        // -------- 控制事件 (鼠标 + 触摸) 修复: gameActive时仍然移动但游戏结束无法移动更好---------
+        function handleMove(clientX, clientY) {
+            if(!gameActive) return;  // 游戏结束不可移动飞船
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            let canvasX = (clientX - rect.left) * scaleX;
+            canvasX = Math.min(Math.max(canvasX, player.radius+5), W - player.radius-5);
+            targetX = canvasX;
+        }
+        
+        function onPointerMove(e) {
+            e.preventDefault();
+            let clientX = e.clientX;
+            if(e.touches) clientX = e.touches[0].clientX;
+            handleMove(clientX, e.clientY);
+        }
+        
+        function initEvents() {
+            canvas.addEventListener('mousemove', onPointerMove);
+            canvas.addEventListener('touchmove', onPointerMove, {passive:false});
+            canvas.addEventListener('touchstart', (e) => { e.preventDefault(); if(e.touches && gameActive) handleMove(e.touches[0].clientX, e.touches[0].clientY);});
+        }
+        
+        // 重置按钮
+        document.getElementById('resetBtn').addEventListener('click', () => {
+            resetGame();
+        });
+        
+        // 动画循环
+        function gameLoop() {
+            updateGame();
+            draw();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        resetGame();
+        initEvents();
+        gameLoop();
+    })();
+</script>
+</body>
+</html>
